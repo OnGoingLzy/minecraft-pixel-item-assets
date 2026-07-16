@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "minecraft": {
+    "version": "1.20.1",
+    "loader": "forge",
+    "modId": "yourmod",
+    "itemId": "item_name",
+    "modelParent": "minecraft:item/generated",
+    "displayName": {
+      "en_us": "Item Name",
+      "zh_cn": "物品名称"
+    }
+  },
+  "canvas": {
+    "width": 16,
+    "height": 16,
+    "margin": 1,
+    "maxSolidColors": 8,
+    "allowSemiTransparent": false
+  },
+  "palette": {
+    ".": "#00000000",
+    "A": "#FFFFFFFF"
+  },
+  "pixels": [
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    ".......AA.......",
+    ".......AA.......",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................"
+  ]
+}

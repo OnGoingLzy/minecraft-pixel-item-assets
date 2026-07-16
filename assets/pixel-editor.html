@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Minecraft Pixel Item Editor</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 20px; background: #111827; color: #e5e7eb; }
+    h1 { margin-top: 0; font-size: 22px; }
+    .layout { display: grid; grid-template-columns: minmax(320px, 560px) minmax(320px, 1fr); gap: 20px; }
+    .panel { background: #1f2937; border: 1px solid #374151; border-radius: 12px; padding: 16px; }
+    canvas { width: min(80vw, 512px); max-width: 100%; image-rendering: pixelated; background:
+      linear-gradient(45deg,#d1d5db 25%,transparent 25%),
+      linear-gradient(-45deg,#d1d5db 25%,transparent 25%),
+      linear-gradient(45deg,transparent 75%,#d1d5db 75%),
+      linear-gradient(-45deg,transparent 75%,#d1d5db 75%);
+      background-size: 24px 24px; background-position: 0 0,0 12px,12px -12px,-12px 0;
+      border: 1px solid #6b7280; cursor: crosshair; }
+    textarea { width: 100%; min-height: 360px; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 13px; }
+    button, select, input { margin: 4px; padding: 8px 10px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+    .palette { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+    .swatch { width: 36px; height: 36px; border: 3px solid transparent; padding: 0; }
+    .swatch.active { border-color: #fbbf24; }
+    .status { min-height: 24px; color: #93c5fd; }
+    code { background: #111827; padding: 2px 5px; border-radius: 4px; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Minecraft Pixel Item Editor</h1>
+  <p>左键绘制，右键擦除。导出的游戏 PNG 使用真实逻辑尺寸与透明背景，不进行插值。</p>
+  <div class="layout">
+    <section class="panel">
+      <div class="toolbar">
+        <input id="fileInput" type="file" accept="application/json,.json" />
+        <button id="applyJson">应用 JSON</button>
+        <button id="clearCanvas">清空</button>
+      </div>
+      <canvas id="editor" width="512" height="512" aria-label="Pixel editor"></canvas>
+      <div id="palette" class="palette"></div>
+      <div class="toolbar">
+        <button id="exportJson">导出 Pixel JSON</button>
+        <button id="exportPng">导出透明 PNG</button>
+        <button id="exportSvg">导出 SVG</button>
+      </div>
+      <div id="status" class="status"></div>
+    </section>
+    <section class="panel">
+      <h2>Pixel JSON</h2>
+      <textarea id="jsonText" spellcheck="false"></textarea>
+      <p>建议最终仍使用技能中的 <code>mc_item_asset.py validate</code> 做严格校验。</p>
+    </section>
+  </div>
+
+<script>
+const initialSpec = {
+  schemaVersion: 1,
+  minecraft: {
+    version: "1.20.1", loader: "forge", modId: "examplemod",
+    itemId: "emerald_sword", modelParent: "minecraft:item/handheld",
+    displayName: { en_us: "Emerald Sword", zh_cn: "绿宝石剑" }
+  },
+  canvas: { width: 16, height: 16, margin: 1, maxSolidColors: 4, allowSemiTransparent: false },
+  palette: { ".": "#00000000", D: "#075C35FF", G: "#12A85AFF", L: "#65E89BFF", B: "#75451FFF" },
+  pixels: [
+    "................",".......LL.......","......LGGL......","......LGGL......",
+    "......LGGL......","......LGGL......","......LGGL......","......LGGL......",
+    "......LGGL......","...DDDLGGLDDD...","..DDDDLGGLDDDD..","......BBBB......",
+    "......BBBB......","......DGGD......",".......DD.......","................"
+  ]
+};
+
+const canvas = document.getElementById("editor");
+const ctx = canvas.getContext("2d", { alpha: true });
+ctx.imageSmoothingEnabled = false;
+const jsonText = document.getElementById("jsonText");
+const paletteNode = document.getElementById("palette");
+const statusNode = document.getElementById("status");
+let spec = structuredClone(initialSpec);
+let selectedKey = "G";
+let drawing = false;
+
+function parseHex(value) {
+  if (value === "transparent") return [0, 0, 0, 0];
+  let raw = value.replace(/^#/, "");
+  if (raw.length === 6) raw += "FF";
+  if (!/^[0-9a-fA-F]{8}$/.test(raw)) throw new Error(`无效颜色: ${value}`);
+  return [0,2,4,6].map(i => parseInt(raw.slice(i, i + 2), 16));
+}
+
+function validateBasic(candidate) {
+  const { width, height } = candidate.canvas;
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) throw new Error("画布尺寸无效");
+  if (!Array.isArray(candidate.pixels) || candidate.pixels.length !== height) throw new Error("像素行数与高度不一致");
+  for (const row of candidate.pixels) if (typeof row !== "string" || row.length !== width) throw new Error("像素列数与宽度不一致");
+  for (const row of candidate.pixels) for (const key of row) if (!(key in candidate.palette)) throw new Error(`未定义调色板键: ${key}`);
+  for (const value of Object.values(candidate.palette)) parseHex(value);
+}
+
+function syncText() { jsonText.value = JSON.stringify(spec, null, 2); }
+function setStatus(message, error = false) { statusNode.textContent = message; statusNode.style.color = error ? "#fca5a5" : "#93c5fd"; }
+
+function renderPalette() {
+  paletteNode.innerHTML = "";
+  for (const [key, value] of Object.entries(spec.palette)) {
+    const button = document.createElement("button");
+    button.className = "swatch" + (key === selectedKey ? " active" : "");
+    button.title = `${key}: ${value}`;
+    const [r,g,b,a] = parseHex(value);
+    button.style.background = a === 0 ? "repeating-conic-gradient(#fff 0 25%,#aaa 0 50%) 0/12px 12px" : `rgba(${r},${g},${b},${a/255})`;
+    button.textContent = key;
+    button.onclick = () => { selectedKey = key; renderPalette(); };
+    paletteNode.appendChild(button);
+  }
+}
+
+function render() {
+  validateBasic(spec);
+  const { width, height } = spec.canvas;
+  const cellW = canvas.width / width;
+  const cellH = canvas.height / height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r,g,b,a] = parseHex(spec.palette[spec.pixels[y][x]]);
+      if (a === 0) continue;
+      ctx.fillStyle = `rgba(${r},${g},${b},${a/255})`;
+      ctx.fillRect(Math.floor(x * cellW), Math.floor(y * cellH), Math.ceil(cellW), Math.ceil(cellH));
+    }
+  }
+  ctx.strokeStyle = "rgba(0,0,0,.22)";
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= width; x++) { ctx.beginPath(); ctx.moveTo(x * cellW, 0); ctx.lineTo(x * cellW, canvas.height); ctx.stroke(); }
+  for (let y = 0; y <= height; y++) { ctx.beginPath(); ctx.moveTo(0, y * cellH); ctx.lineTo(canvas.width, y * cellH); ctx.stroke(); }
+  renderPalette();
+  syncText();
+}
+
+function transparentKey() {
+  return Object.entries(spec.palette).find(([, value]) => parseHex(value)[3] === 0)?.[0] ?? ".";
+}
+
+function paintFromEvent(event, erase = false) {
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((event.clientX - rect.left) / rect.width * spec.canvas.width);
+  const y = Math.floor((event.clientY - rect.top) / rect.height * spec.canvas.height);
+  if (x < 0 || y < 0 || x >= spec.canvas.width || y >= spec.canvas.height) return;
+  const rows = spec.pixels.slice();
+  const chars = [...rows[y]];
+  chars[x] = erase ? transparentKey() : selectedKey;
+  rows[y] = chars.join("");
+  spec.pixels = rows;
+  render();
+}
+
+canvas.addEventListener("pointerdown", e => { drawing = true; paintFromEvent(e, e.button === 2); });
+canvas.addEventListener("pointermove", e => { if (drawing) paintFromEvent(e, (e.buttons & 2) !== 0); });
+window.addEventListener("pointerup", () => drawing = false);
+canvas.addEventListener("contextmenu", e => e.preventDefault());
+
+document.getElementById("applyJson").onclick = () => {
+  try { const next = JSON.parse(jsonText.value); validateBasic(next); spec = next; selectedKey = Object.keys(spec.palette).find(k => parseHex(spec.palette[k])[3] !== 0) ?? transparentKey(); render(); setStatus("JSON 已应用"); }
+  catch (error) { setStatus(error.message, true); }
+};
+
+document.getElementById("fileInput").onchange = async event => {
+  try { const file = event.target.files[0]; if (!file) return; jsonText.value = await file.text(); document.getElementById("applyJson").click(); }
+  catch (error) { setStatus(error.message, true); }
+};
+
+document.getElementById("clearCanvas").onclick = () => {
+  const empty = transparentKey().repeat(spec.canvas.width);
+  spec.pixels = Array.from({ length: spec.canvas.height }, () => empty);
+  render();
+};
+
+function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = name; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportJson() {
+  downloadBlob(`${spec.minecraft.itemId}.pixel.json`, new Blob([JSON.stringify(spec, null, 2) + "\n"], { type: "application/json" }));
+}
+
+function exactCanvas(whiteBackground = false) {
+  const out = document.createElement("canvas");
+  out.width = spec.canvas.width; out.height = spec.canvas.height;
+  const outCtx = out.getContext("2d", { alpha: true });
+  outCtx.imageSmoothingEnabled = false;
+  if (whiteBackground) { outCtx.fillStyle = "#fff"; outCtx.fillRect(0, 0, out.width, out.height); }
+  for (let y = 0; y < out.height; y++) for (let x = 0; x < out.width; x++) {
+    const [r,g,b,a] = parseHex(spec.palette[spec.pixels[y][x]]);
+    if (a === 0) continue;
+    outCtx.fillStyle = `rgba(${r},${g},${b},${a/255})`;
+    outCtx.fillRect(x, y, 1, 1);
+  }
+  return out;
+}
+
+function exportPng() {
+  exactCanvas(false).toBlob(blob => downloadBlob(`${spec.minecraft.itemId}.png`, blob), "image/png");
+}
+
+function exportSvg() {
+  const { width, height } = spec.canvas;
+  const lines = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" shape-rendering="crispEdges">`];
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const [r,g,b,a] = parseHex(spec.palette[spec.pixels[y][x]]);
+    if (a === 0) continue;
+    const color = `#${[r,g,b].map(v => v.toString(16).padStart(2,"0")).join("")}`;
+    lines.push(`<rect x="${x}" y="${y}" width="1" height="1" fill="${color}"${a < 255 ? ` fill-opacity="${a/255}"` : ""}/>`);
+  }
+  lines.push("</svg>");
+  downloadBlob(`${spec.minecraft.itemId}.svg`, new Blob([lines.join("\n")], { type: "image/svg+xml" }));
+}
+
+document.getElementById("exportJson").onclick = exportJson;
+document.getElementById("exportPng").onclick = exportPng;
+document.getElementById("exportSvg").onclick = exportSvg;
+render();
+</script>
+</body>
+</html>

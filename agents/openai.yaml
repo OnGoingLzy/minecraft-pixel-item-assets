@@ -1,0 +1,9 @@
+interface:
+  display_name: "Minecraft Pixel Item Assets"
+  short_description: "Create validated pixel icons and Minecraft item resources"
+  icon_small: "./assets/icon.svg"
+  icon_large: "./assets/icon.svg"
+  brand_color: "#18A85B"
+  default_prompt: "Use $minecraft-pixel-item-assets to create, validate, and export a Minecraft Java Edition item icon and its version-appropriate resources."
+policy:
+  allow_implicit_invocation: true

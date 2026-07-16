@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "minecraft": {
+    "version": "1.20.1",
+    "loader": "forge",
+    "modId": "examplemod",
+    "itemId": "emerald_sword",
+    "modelParent": "minecraft:item/handheld",
+    "displayName": {
+      "en_us": "Emerald Sword",
+      "zh_cn": "绿宝石剑"
+    }
+  },
+  "canvas": {
+    "width": 16,
+    "height": 16,
+    "margin": 1,
+    "maxSolidColors": 4,
+    "allowSemiTransparent": false
+  },
+  "palette": {
+    ".": "#00000000",
+    "D": "#075C35FF",
+    "G": "#12A85AFF",
+    "L": "#65E89BFF",
+    "B": "#75451FFF"
+  },
+  "pixels": [
+    "................",
+    ".......LL.......",
+    "......LGGL......",
+    "......LGGL......",
+    "......LGGL......",
+    "......LGGL......",
+    "......LGGL......",
+    "......LGGL......",
+    "......LGGL......",
+    "...DDDLGGLDDD...",
+    "..DDDDLGGLDDDD..",
+    "......BBBB......",
+    "......BBBB......",
+    "......DGGD......",
+    ".......DD.......",
+    "................"
+  ]
+}
